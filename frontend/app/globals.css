@@ -8,6 +8,7 @@
   --accent: #e10600;      /* F1 red */
   --green: #24d17e;
   --amber: #ffb020;
+  --blue: #4c9ffe;
 }
 * { box-sizing: border-box; }
 html, body {
@@ -15,7 +16,11 @@ html, body {
   font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
   font-size: 14px;
 }
-.wrap { max-width: 1100px; margin: 0 auto; padding: 20px; overflow-x: hidden; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 20px; overflow-x: hidden; }
+.muted { color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+.panel { background: var(--panel); border: 1px solid var(--line); }
+
 .header { display: flex; align-items: baseline; justify-content: space-between;
   margin-bottom: 14px; flex-wrap: wrap; gap: 8px 16px; }
 .header h1 { font-size: 18px; letter-spacing: 0.18em; margin: 0; }
@@ -25,15 +30,52 @@ html, body {
 .status-GREEN { color: var(--green); }
 .status-SC, .status-VSC, .status-YELLOW { color: var(--amber); }
 .status-RED { color: var(--accent); }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+.dot.on { background: var(--green); } .dot.off { background: var(--accent); }
 
-/* The tower gets its own horizontal scroll context. Cells are nowrap, so
-   without this the table widens .wrap, overflows the page, and silently pushes
-   the last column (Deg) and the header meta out of view. */
+/* map + side panel */
+.grid { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 12px; margin-bottom: 12px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.map { padding: 8px; min-height: 320px; display: flex; }
+.map svg { width: 100%; height: 340px; }
+.map-empty { color: var(--muted); padding: 24px; }
+.track-line { fill: none; stroke: #2c3644; stroke-linejoin: round; }
+.car { cursor: pointer; transition: transform 0.45s linear; }
+.car circle { fill: var(--muted); stroke: var(--bg); stroke-width: 0.4%; }
+.car text { fill: var(--muted); font-weight: 700; }
+.car.leader circle { fill: var(--accent); }
+.car.leader text { fill: var(--text); }
+.car.inpit circle { fill: var(--amber); }
+.car.sel circle { fill: var(--blue); }
+.car.sel text { fill: var(--blue); }
+
+.side { padding: 12px; }
+.side-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.drv.big { font-size: 20px; font-weight: 700; letter-spacing: 0.06em; }
+.speed { font-size: 34px; font-weight: 700; line-height: 1.1; }
+.speed .unit { font-size: 12px; color: var(--muted); margin-left: 6px; font-weight: 400; }
+.gearrpm { font-size: 12px; margin-bottom: 10px; }
+.bar-row { display: grid; grid-template-columns: 34px 1fr 30px; align-items: center; gap: 8px; margin: 4px 0; }
+.bar-label { font-size: 10px; color: var(--muted); letter-spacing: 0.1em; }
+.bar-track { height: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+.bar-fill { height: 100%; transition: width 0.3s linear; }
+.bar-fill.thr { background: var(--green); }
+.bar-fill.brk { background: var(--accent); }
+.bar-val { font-size: 11px; color: var(--muted); text-align: right; }
+.side-sec { margin: 14px 0 6px; font-size: 10px; letter-spacing: 0.14em; color: var(--muted);
+  text-transform: uppercase; border-top: 1px solid var(--line); padding-top: 10px; }
+.kv { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 5px 0; font-size: 12px; }
+.kv > span:first-child { color: var(--muted); }
+.caveat { font-size: 10px; color: var(--muted); line-height: 1.45; margin: 4px 0 8px; opacity: 0.85; }
+
+/* timing tower */
 .tower-scroll { width: 100%; overflow-x: auto; }
-.tower { width: 100%; min-width: 760px; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }
+.tower { width: 100%; min-width: 860px; border-collapse: collapse; }
 .tower th, .tower td { padding: 8px 9px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .tower th { color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
-.tower tr:hover td { background: var(--panel-2); }
+.tower tbody tr { cursor: pointer; }
+.tower tbody tr:hover td { background: var(--panel-2); }
+.tower tbody tr.sel td { background: #1b2430; }
 .pos { color: var(--muted); width: 32px; }
 .drv { font-weight: 700; letter-spacing: 0.05em; }
 .tyre { display: inline-block; width: 20px; text-align: center; border-radius: 3px; font-size: 11px; font-weight: 700; padding: 1px 0; }
@@ -42,11 +84,10 @@ html, body {
 .tyre.HARD { background: #22262c; color: #dfe7ef; }
 .tyre.INTERMEDIATE { background: #0d3a1a; color: #4ade80; }
 .tyre.WET { background: #0d233a; color: #60a5fa; }
-.chip { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.tyre.UNKNOWN { background: #22262c; color: var(--muted); }
+.chip { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .chip.deg-good { color: var(--green); border-color: #1c5138; }
 .chip.deg-bad { color: var(--amber); border-color: #5a4110; }
-.num { font-variant-numeric: tabular-nums; }
+.chip.box { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
 .pit { color: var(--accent); font-weight: 700; }
-.foot { color: var(--muted); font-size: 11px; margin-top: 12px; max-width: 100%; overflow-wrap: break-word; }
-.dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
-.dot.on { background: var(--green); } .dot.off { background: var(--accent); }
+.foot { color: var(--muted); font-size: 11px; margin-top: 12px; max-width: 100%; overflow-wrap: break-word; line-height: 1.6; }
