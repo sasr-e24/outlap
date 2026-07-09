@@ -99,6 +99,27 @@ class StintChange(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class TrackOutline(Event):
+    """The circuit shape, emitted once per session.
+
+    `points` is an ordered ring of (x, y) in the source's own coordinate space
+    (FastF1 uses tenths of a metre; the fixture uses arbitrary units). The UI
+    normalizes to a viewBox, so absolute scale never matters.
+    """
+
+    points: tuple = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PositionSample(Event):
+    """Where a car is on track at `sim_time`. ~1 Hz here; the real feed is faster."""
+
+    driver: str = ""
+    x: float = 0.0
+    y: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class TelemetrySample(Event):
     driver: str = ""
     speed: float = 0.0
@@ -158,6 +179,8 @@ ALL_EVENT_TYPES = (
     PitExit,
     StintChange,
     TelemetrySample,
+    TrackOutline,
+    PositionSample,
     RaceControl,
     Weather,
     TeamRadio,

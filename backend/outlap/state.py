@@ -15,7 +15,7 @@ it. This separation is what keeps every probability explainable and replayable.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from .events import (
@@ -25,9 +25,12 @@ from .events import (
     LapCompleted,
     PitEntry,
     PitExit,
+    PositionSample,
     RaceControl,
     SessionInfo,
     StintChange,
+    TelemetrySample,
+    TrackOutline,
     Weather,
 )
 
@@ -55,6 +58,15 @@ class DriverState:
     pit_stops: int = 0
     stints: List[Stint] = field(default_factory=list)
 
+    # live car state (from PositionSample / TelemetrySample)
+    x: Optional[float] = None
+    y: Optional[float] = None
+    speed: Optional[float] = None
+    throttle: Optional[float] = None
+    brake: Optional[float] = None
+    gear: Optional[int] = None
+    rpm: Optional[float] = None
+
     @property
     def current_stint(self) -> Optional[Stint]:
         return self.stints[-1] if self.stints else None
@@ -75,6 +87,9 @@ class RaceState:
     air_temp: Optional[float] = None
     track_temp: Optional[float] = None
     rainfall: bool = False
+
+    # circuit geometry (ordered ring of (x, y)); empty until TrackOutline arrives
+    track_outline: List[tuple] = field(default_factory=list)
 
     # per-driver
     drivers: Dict[str, DriverState] = field(default_factory=dict)
@@ -149,6 +164,22 @@ class RaceState:
             )
             d.compound = event.compound
 
+        elif isinstance(event, TrackOutline):
+            self.track_outline = list(event.points)
+
+        elif isinstance(event, PositionSample):
+            d = self._driver(event.driver)
+            d.x = event.x
+            d.y = event.y
+
+        elif isinstance(event, TelemetrySample):
+            d = self._driver(event.driver)
+            d.speed = event.speed
+            d.throttle = event.throttle
+            d.brake = event.brake
+            d.gear = event.gear
+            d.rpm = event.rpm
+
         elif isinstance(event, RaceControl):
             if event.flag:
                 self.track_status = event.flag
@@ -187,6 +218,26 @@ class RaceState:
                 "pit_stops": d.pit_stops,
             }
             for d in rows
+        ]
+
+    def cars(self) -> List[dict]:
+        """Live car positions + telemetry, for the track map and telemetry panel."""
+        return [
+            {
+                "driver": d.driver,
+                "position": d.position,
+                "x": d.x,
+                "y": d.y,
+                "speed": d.speed,
+                "throttle": d.throttle,
+                "brake": d.brake,
+                "gear": d.gear,
+                "rpm": d.rpm,
+                "in_pit": d.in_pit,
+                "compound": d.compound.value,
+            }
+            for d in sorted(self.drivers.values(), key=lambda d: d.position or 99)
+            if d.x is not None
         ]
 
 

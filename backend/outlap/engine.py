@@ -12,13 +12,14 @@ bus for the events/predictions they care about.
 
 from __future__ import annotations
 
-import asyncio
 from typing import List, Optional
 
 from .bus import EventBus
 from .events import Event, Prediction
 from .models.base import ModelWorker
 from .models.deg import DegFitter
+from .models.pit_window import PitWindowModel
+from .models.undercut import UndercutModel
 from .sources.base import DataSource
 from .state import RaceState
 
@@ -58,11 +59,12 @@ class Engine:
         self.bus.subscribe(Event, self._apply_to_state)
         self.bus.subscribe(Prediction, self.ledger.record)
 
-        # default model set (P0 ships the deg fitter as a worked example)
+        # default model set. Order matters: DegFitter publishes the deg slope the
+        # other two consume (they cache it off the bus, never mutate state).
         self._register_default_models()
 
     def _register_default_models(self) -> None:
-        for cls in (DegFitter,):
+        for cls in (DegFitter, PitWindowModel, UndercutModel):
             worker = cls(self.bus, self.state)
             worker.attach()
             self.models.append(worker)
