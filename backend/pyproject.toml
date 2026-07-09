@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "outlap"
+version = "0.0.1"
+description = "OUTLAP — F1 live pit wall backend (replay-first, real-time-ready)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+
+[project.optional-dependencies]
+# Real replays from FastF1 sessions (heavy: pandas/numpy). Core runs without it.
+fastf1 = ["fastf1>=3.3", "pandas>=2.0", "numpy>=1.26"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+outlap = "outlap.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["outlap*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
