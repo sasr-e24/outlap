@@ -4,9 +4,9 @@ Kept separate and imported lazily so the core package does not depend on
 fastf1/pandas. Turns a real session into the same `Event` stream the synthetic
 fixture produces, so downstream code cannot tell them apart.
 
-Normalization is intentionally lap-resolution for P0 (LapCompleted, GapUpdate,
-Pit*, StintChange, Weather, RaceControl). Higher-rate CarData telemetry is a
-later add — the event types already exist for it.
+Lap-resolution events (LapCompleted, GapUpdate, Pit*, StintChange, Weather,
+RaceControl) plus, when `with_telemetry` is on, the circuit outline and
+downsampled car positions/telemetry that drive the track map.
 """
 
 from __future__ import annotations
@@ -20,11 +20,19 @@ from ..events import (
     LapCompleted,
     PitEntry,
     PitExit,
+    PositionSample,
     RaceControl,
     SessionInfo,
     StintChange,
+    TelemetrySample,
+    TrackOutline,
     Weather,
 )
+
+#: seconds between position/telemetry samples pulled from FastF1. The raw feed is
+#: far denser (~4 Hz position, ~3.7 Hz car data); we downsample so a 2-hour race
+#: doesn't become millions of events.
+POSITION_DT_S = 1.0
 
 
 def _compound(raw) -> Compound:
@@ -57,7 +65,11 @@ def _secs(td) -> Optional[float]:
 
 
 def load_fastf1_event_log(
-    year: int, gp, session: str = "R", cache_dir: Optional[str] = None
+    year: int,
+    gp,
+    session: str = "R",
+    cache_dir: Optional[str] = None,
+    with_telemetry: bool = True,
 ) -> List[Event]:
     import fastf1
 
@@ -65,7 +77,7 @@ def load_fastf1_event_log(
         fastf1.Cache.enable_cache(cache_dir)
 
     ses = fastf1.get_session(year, gp, session)
-    ses.load(telemetry=False, weather=True, messages=True)
+    ses.load(telemetry=with_telemetry, weather=True, messages=True)
 
     events: List[Event] = []
     t0 = ses.laps["LapStartTime"].min() if "LapStartTime" in ses.laps else None
@@ -163,5 +175,72 @@ def load_fastf1_event_log(
                 )
             )
 
+    if with_telemetry:
+        events.extend(_geometry_events(ses, rel))
+
     events.sort(key=lambda e: e.sim_time)
     return events
+
+
+def _geometry_events(ses, rel) -> List[Event]:
+    """Track outline (from the fastest lap's X/Y) + downsampled car positions.
+
+    FastF1 exposes position and car-data channels per driver. We resample onto a
+    fixed grid so the event rate is predictable and the replay stays light.
+    """
+    out: List[Event] = []
+
+    # circuit outline: the fastest lap traces the racing line, which is close
+    # enough to the track shape for a map.
+    try:
+        fastest = ses.laps.pick_fastest()
+        tel = fastest.get_telemetry()
+        pts = [(float(x), float(y)) for x, y in zip(tel["X"], tel["Y"])]
+        # thin to keep the payload sane
+        step = max(1, len(pts) // 500)
+        out.append(TrackOutline(sim_time=0.0, points=tuple(pts[::step])))
+    except Exception:
+        pass  # no telemetry for this session; the map simply won't render
+
+    for drv in ses.drivers:
+        try:
+            abbr = ses.get_driver(drv)["Abbreviation"]
+            pos = ses.pos_data[drv]
+            car = ses.car_data[drv]
+        except Exception:
+            continue
+
+        last_t = None
+        for _, row in pos.iterrows():
+            t = rel(row.get("Date")) if "Date" in row else None
+            t = _secs(row.get("SessionTime")) if t is None else t
+            if t is None:
+                continue
+            if last_t is not None and (t - last_t) < POSITION_DT_S:
+                continue
+            last_t = t
+            out.append(
+                PositionSample(sim_time=t, driver=abbr, x=float(row["X"]), y=float(row["Y"]))
+            )
+
+        last_t = None
+        for _, row in car.iterrows():
+            t = _secs(row.get("SessionTime"))
+            if t is None:
+                continue
+            if last_t is not None and (t - last_t) < POSITION_DT_S:
+                continue
+            last_t = t
+            out.append(
+                TelemetrySample(
+                    sim_time=t,
+                    driver=abbr,
+                    speed=float(row.get("Speed") or 0.0),
+                    throttle=float(row.get("Throttle") or 0.0),
+                    brake=100.0 if row.get("Brake") else 0.0,
+                    gear=int(row.get("nGear") or 0),
+                    rpm=float(row.get("RPM") or 0.0),
+                )
+            )
+
+    return out
