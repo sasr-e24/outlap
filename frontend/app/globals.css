@@ -1,0 +1,47 @@
+:root {
+  --bg: #0a0c10;
+  --panel: #12161d;
+  --panel-2: #171c25;
+  --line: #232b36;
+  --text: #e6edf3;
+  --muted: #8b98a9;
+  --accent: #e10600;      /* F1 red */
+  --green: #24d17e;
+  --amber: #ffb020;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--text);
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 14px;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
+.header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+.header h1 { font-size: 18px; letter-spacing: 0.18em; margin: 0; }
+.header .accent { color: var(--accent); }
+.meta { color: var(--muted); font-size: 12px; display: flex; gap: 16px; }
+.age { color: var(--amber); }
+.status-GREEN { color: var(--green); }
+.status-SC, .status-VSC, .status-YELLOW { color: var(--amber); }
+.status-RED { color: var(--accent); }
+
+.tower { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }
+.tower th, .tower td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tower th { color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.tower tr:hover td { background: var(--panel-2); }
+.pos { color: var(--muted); width: 32px; }
+.drv { font-weight: 700; letter-spacing: 0.05em; }
+.tyre { display: inline-block; width: 20px; text-align: center; border-radius: 3px; font-size: 11px; font-weight: 700; padding: 1px 0; }
+.tyre.SOFT { background: #3a0d0d; color: #ff5a5a; }
+.tyre.MEDIUM { background: #3a3410; color: #ffe066; }
+.tyre.HARD { background: #22262c; color: #dfe7ef; }
+.tyre.INTERMEDIATE { background: #0d3a1a; color: #4ade80; }
+.tyre.WET { background: #0d233a; color: #60a5fa; }
+.chip { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.chip.deg-good { color: var(--green); border-color: #1c5138; }
+.chip.deg-bad { color: var(--amber); border-color: #5a4110; }
+.num { font-variant-numeric: tabular-nums; }
+.pit { color: var(--accent); font-weight: 700; }
+.foot { color: var(--muted); font-size: 11px; margin-top: 12px; }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+.dot.on { background: var(--green); } .dot.off { background: var(--accent); }

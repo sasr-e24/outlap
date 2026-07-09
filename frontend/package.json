@@ -1,0 +1,23 @@
+{
+  "name": "outlap-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "OUTLAP — Race HQ timing tower (Next.js/React WS client)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.2.10",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.0",
+    "@types/react": "19.2.0",
+    "@types/react-dom": "19.2.0",
+    "typescript": "5.5.3"
+  }
+}
