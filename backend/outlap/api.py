@@ -1,14 +1,22 @@
-"""FastAPI app — REST for state/history + WebSocket push of live deltas.
+"""FastAPI app — REST for state/track/predictions + WebSocket push of live deltas.
 
 P0 serves a single replay (the synthetic fixture by default, or a FastF1 session
-via env vars) so the frontend timing tower has something live to render. The
-engine drives the replay in a background task; every state change is fanned out
-to connected WebSocket clients.
+via env vars) so the frontend has something live to render. The engine drives the
+replay in a background task; changes are fanned out to WebSocket clients.
+
+Three frame types go over the socket:
+  * ``state``      - timing tower + lap/flag context. Sent on race events only.
+  * ``cars``       - positions + telemetry for the track map. Sent once per
+                     position tick, not once per sample (6 drivers x 2 events).
+  * ``prediction`` - any model output (deg, pit_window, undercut).
+
+The track outline is static for a session, so it is served over REST rather than
+pushed every frame.
 
 Run:  uvicorn outlap.api:app --reload
 Env:
   OUTLAP_SOURCE = "synthetic" (default) | "fastf1"
-  OUTLAP_SPEED  = playback multiplier for the WS stream (default 10)
+  OUTLAP_SPEED  = playback multiplier (default 10)
   OUTLAP_FF1_YEAR / OUTLAP_FF1_GP / OUTLAP_FF1_SESSION (when source=fastf1)
   OUTLAP_FF1_CACHE = fastf1 cache dir
 """
@@ -18,15 +26,31 @@ from __future__ import annotations
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from typing import List, Set
+from typing import Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .engine import Engine
-from .events import Event, LapCompleted, Prediction
+from .events import (
+    Event,
+    GapUpdate,
+    LapCompleted,
+    PitEntry,
+    PitExit,
+    PositionSample,
+    Prediction,
+    RaceControl,
+    SessionInfo,
+    StintChange,
+    TelemetrySample,
+)
 from .fixtures import build_synthetic_race
 from .sources.replay import ReplaySource
+
+# events that change the timing tower / race context
+_STATE_EVENTS = (LapCompleted, GapUpdate, PitEntry, PitExit, RaceControl, StintChange, SessionInfo)
+_CAR_EVENTS = (PositionSample, TelemetrySample)
 
 
 class Hub:
@@ -70,27 +94,49 @@ hub = Hub()
 engine: Engine | None = None
 
 
+def _state_frame(state) -> dict:
+    return {
+        "type": "state",
+        "circuit": state.circuit,
+        "sim_time": round(state.last_sim_time, 2),
+        "current_lap": state.current_lap,
+        "total_laps": state.total_laps,
+        "track_status": state.track_status,
+        "tower": state.timing_tower(),
+        "last_event": "snapshot",
+    }
+
+
+def _cars_frame(state) -> dict:
+    return {"type": "cars", "sim_time": round(state.last_sim_time, 2), "cars": state.cars()}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global engine
     engine = Engine(_build_source())
 
+    # Position/telemetry arrive as a burst of samples sharing one sim_time. We
+    # flush a `cars` frame only when the tick advances, so every broadcast shows
+    # the whole field at a single instant rather than a half-updated grid.
+    tick: dict = {"t": None}
+
     async def fan_out(event: Event, state) -> None:
-        frame = {
-            "type": "state",
-            "circuit": state.circuit,
-            "sim_time": round(state.last_sim_time, 2),
-            "current_lap": state.current_lap,
-            "total_laps": state.total_laps,
-            "track_status": state.track_status,
-            "tower": state.timing_tower(),
-            "last_event": event.kind,
-        }
-        await hub.broadcast(frame)
+        if isinstance(event, _CAR_EVENTS):
+            if tick["t"] is not None and event.sim_time != tick["t"]:
+                await hub.broadcast(_cars_frame(state))
+            tick["t"] = event.sim_time
+            return
+        if isinstance(event, _STATE_EVENTS):
+            frame = _state_frame(state)
+            frame["last_event"] = event.kind
+            await hub.broadcast(frame)
 
     engine.on_change(fan_out)
 
-    async def preds_out(pred: Prediction) -> None:
+    async def preds_out(pred: Event) -> None:
+        if not isinstance(pred, Prediction):
+            return
         await hub.broadcast(
             {
                 "type": "prediction",
@@ -112,18 +158,22 @@ async def lifespan(app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="OUTLAP", version="0.0.1", lifespan=lifespan)
+app = FastAPI(title="OUTLAP", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "version": "0.0.1"}
+    return {"ok": True, "version": "0.1.0"}
+
+
+@app.get("/api/track")
+async def get_track() -> dict:
+    """Circuit outline. Static for a session, so fetched once by the client."""
+    assert engine is not None
+    return {"circuit": engine.state.circuit, "outline": engine.state.track_outline}
 
 
 @app.get("/api/state")
@@ -139,6 +189,12 @@ async def get_state() -> dict:
         "sim_time": round(s.last_sim_time, 2),
         "tower": s.timing_tower(),
     }
+
+
+@app.get("/api/cars")
+async def get_cars() -> dict:
+    assert engine is not None
+    return _cars_frame(engine.state)
 
 
 @app.get("/api/predictions/{model}/{metric}")
@@ -159,22 +215,11 @@ async def get_predictions(model: str, metric: str) -> dict:
 async def ws_endpoint(ws: WebSocket) -> None:
     await hub.connect(ws)
     try:
-        # send a snapshot immediately so a late joiner isn't blank
         assert engine is not None
-        await ws.send_json(
-            {
-                "type": "state",
-                "circuit": engine.state.circuit,
-                "sim_time": round(engine.state.last_sim_time, 2),
-                "current_lap": engine.state.current_lap,
-                "total_laps": engine.state.total_laps,
-                "track_status": engine.state.track_status,
-                "tower": engine.state.timing_tower(),
-                "last_event": "snapshot",
-            }
-        )
+        # snapshot immediately so a late joiner isn't staring at a blank screen
+        await ws.send_json(_state_frame(engine.state))
+        await ws.send_json(_cars_frame(engine.state))
         while True:
-            # we don't expect client messages in P0; keep the socket alive
             await ws.receive_text()
     except WebSocketDisconnect:
         hub.disconnect(ws)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import random
 from typing import List
 
+from . import circuit
 from .events import (
     Compound,
     Event,
@@ -21,8 +22,11 @@ from .events import (
     LapCompleted,
     PitExit,
     PitEntry,
+    PositionSample,
     SessionInfo,
     StintChange,
+    TelemetrySample,
+    TrackOutline,
     Weather,
 )
 
@@ -45,9 +49,13 @@ DEG = {  # s per lap of tyre age, per compound
 PIT_LANE_LOSS = 21.0
 
 
-def build_synthetic_race(total_laps: int = 40, seed: int = 7) -> List[Event]:
+def build_synthetic_race(
+    total_laps: int = 40, seed: int = 7, position_dt: float = 2.0
+) -> List[Event]:
+    """`position_dt` = seconds between position/telemetry samples (0 disables them)."""
     rng = random.Random(seed)
     events: List[Event] = []
+    events.append(TrackOutline(sim_time=0.0, points=tuple(circuit.outline())))
     events.append(
         SessionInfo(
             sim_time=0.0,
@@ -67,6 +75,7 @@ def build_synthetic_race(total_laps: int = 40, seed: int = 7) -> List[Event]:
     tyre_age = {drv: 0 for drv in _GRID}
     compound = {drv: start_compound for drv in _GRID}
     stint_no = {drv: 1 for drv in _GRID}
+    spans = {drv: [] for drv in _GRID}  # (start_t, end_t) per lap, for positioning
 
     for drv in _GRID:
         events.append(
@@ -109,7 +118,9 @@ def build_synthetic_race(total_laps: int = 40, seed: int = 7) -> List[Event]:
                     )
                 )
 
+            lap_start = clock[drv]
             clock[drv] += lap_time
+            spans[drv].append((lap_start, clock[drv]))
             tyre_age[drv] += 1
             lap_rows.append((drv, clock[drv], lap_time, is_pit_lap))
 
@@ -141,5 +152,39 @@ def build_synthetic_race(total_laps: int = 40, seed: int = 7) -> List[Event]:
             )
             prev_time = cum
 
+    if position_dt > 0:
+        events.extend(_position_events(spans, position_dt))
+
     events.sort(key=lambda e: (e.sim_time, 0 if isinstance(e, LapCompleted) else 1))
     return events
+
+
+def _position_events(spans: dict, dt: float) -> List[Event]:
+    """Place each car on the circuit between its lap boundaries.
+
+    A driver's progress around the track is its fraction through the current
+    lap, so cars that started the lap earlier are further round -- gaps on the
+    map fall out of the lap times rather than being faked separately.
+    """
+    out: List[Event] = []
+    race_end = max(s[-1][1] for s in spans.values() if s)
+    idx = {drv: 0 for drv in spans}
+    t = 0.0
+    while t <= race_end:
+        for drv, drv_spans in spans.items():
+            i = idx[drv]
+            while i < len(drv_spans) and t > drv_spans[i][1]:
+                i += 1
+            idx[drv] = i
+            if i >= len(drv_spans):
+                continue  # this driver has finished
+            start, end = drv_spans[i]
+            if t < start:
+                continue
+            u = (t - start) / (end - start) if end > start else 0.0
+            x, y = circuit.point_at(u)
+            out.append(PositionSample(sim_time=t, driver=drv, x=round(x, 1), y=round(y, 1)))
+            tel = circuit.telemetry_at(u)
+            out.append(TelemetrySample(sim_time=t, driver=drv, **tel))
+        t += dt
+    return out
