@@ -24,6 +24,7 @@ export default function TimingTower({
   deg: Record<string, DegInfo>;
 }) {
   return (
+    <div className="tower-scroll">
     <table className="tower">
       <thead>
         <tr>
@@ -77,5 +78,6 @@ export default function TimingTower({
         })}
       </tbody>
     </table>
+    </div>
   );
 }
